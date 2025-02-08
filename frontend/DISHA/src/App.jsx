@@ -13,7 +13,7 @@ function App() {
     formData.append("image", file);
 
     try {
-      const response = await fetch("http://192.168.0.108:5000/upload", {
+      const response = await fetch("http://192.168.0.104:5000/upload", {
         method: "POST",
         body: formData,
       });
