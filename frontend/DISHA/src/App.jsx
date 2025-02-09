@@ -13,7 +13,7 @@ function App() {
     formData.append("image", file);
 
     try {
-      const response = await fetch("https://c332-114-79-176-226.ngrok-free.app/upload", {
+      const response = await fetch("https://5ac2-114-79-176-226.ngrok-free.app/upload", {
         method: "POST",
         body: formData,
       });
