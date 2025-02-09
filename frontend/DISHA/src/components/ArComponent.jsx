@@ -2,12 +2,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { ARButton } from 'three/examples/jsm/webxr/ARButton';
 
-const ArComponent = ({ startPos, waypoints }) => {
+const ArComponent = ({ startPos,waypoints }) => {
   const containerRef = useRef(null);
   const sceneRef = useRef(null);
   const cameraRef = useRef(null);
   const rendererRef = useRef(null);
-  const markersRef = useRef([]);
+  const waypointMarkersRef = useRef([]);
   const [arAnchor, setArAnchor] = useState(null);
 
   useEffect(() => {
@@ -70,7 +70,7 @@ const ArComponent = ({ startPos, waypoints }) => {
               const anchorPose = new XRRigidTransform(hit.getPose(referenceSpace).transform.position);
               hit.createAnchor().then(anchor => {
                 setArAnchor(anchor);
-                updateMarkerPositions(anchor, referenceSpace);
+                updateWaypointPositions(anchor, referenceSpace);
               });
             }
           }
@@ -83,41 +83,35 @@ const ArComponent = ({ startPos, waypoints }) => {
       renderer.setAnimationLoop(null);
       renderer.dispose();
       document.body.removeChild(arButton);
-      cleanupMarkers();
+      cleanupWaypoints();
     };
-  }, [startPos, waypoints]);
+  }, []);
 
-  const cleanupMarkers = () => {
-    markersRef.current.forEach(marker => {
+  const cleanupWaypoints = () => {
+    waypointMarkersRef.current.forEach(marker => {
       sceneRef.current.remove(marker);
-      if (marker.geometry) marker.geometry.dispose();
-      if (marker.material) marker.material.dispose();
+      marker.geometry.dispose();
+      marker.material.dispose();
     });
-    markersRef.current = [];
+    waypointMarkersRef.current = [];
   };
 
-  const createMarker = (position, isStart = false) => {
+  const createWaypointMarker = (position) => {
     // Create a more visible marker
-    const markerGeometry = isStart 
-      ? new THREE.SphereGeometry(0.1, 32, 32)  // Larger sphere for start point
-      : new THREE.CylinderGeometry(0.05, 0.05, 0.2, 32);
-    
+    const markerGeometry = new THREE.CylinderGeometry(0.05, 0.05, 0.2, 32);
     const markerMaterial = new THREE.MeshPhongMaterial({
-      color: isStart ? 0xff0000 : 0x00ff00,  // Red for start point, green for waypoints
+      color: 0x00ff00,
       transparent: true,
       opacity: 0.7
     });
-    
     const marker = new THREE.Mesh(markerGeometry, markerMaterial);
     
-    // Add floating arrow for non-start points
-    if (!isStart) {
-      const arrowGeometry = new THREE.ConeGeometry(0.03, 0.08, 32);
-      const arrowMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000 });
-      const arrow = new THREE.Mesh(arrowGeometry, arrowMaterial);
-      arrow.position.y = 0.2;
-      marker.add(arrow);
-    }
+    // Add floating arrow above marker
+    const arrowGeometry = new THREE.ConeGeometry(0.03, 0.08, 32);
+    const arrowMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+    const arrow = new THREE.Mesh(arrowGeometry, arrowMaterial);
+    arrow.position.y = 0.2;
+    marker.add(arrow);
 
     // Position the marker
     marker.position.copy(position);
@@ -132,24 +126,12 @@ const ArComponent = ({ startPos, waypoints }) => {
     return marker;
   };
 
-  const updateMarkerPositions = (anchor, referenceSpace) => {
-    cleanupMarkers();
+  const updateWaypointPositions = (anchor, referenceSpace) => {
+    cleanupWaypoints();
     
-    // Scale factor to make the markers visible in AR space
+    // Scale factor to make the waypoints visible in AR space
     const scale = 0.1; // Adjust this value based on your needs
     
-    // Add start point marker
-    const startPosition = new THREE.Vector3(
-      startPos.x * scale,
-      startPos.y * scale,
-      startPos.z * scale
-    );
-    const startMarker = createMarker(startPosition, true);
-    sceneRef.current.add(startMarker);
-    markersRef.current.push(startMarker);
-
-    // Process waypoints
-    let previousPosition = startPosition;
     waypoints.forEach((waypoint, index) => {
       // Convert waypoint coordinates to AR space
       const position = new THREE.Vector3(
@@ -158,25 +140,31 @@ const ArComponent = ({ startPos, waypoints }) => {
         waypoint.z * scale
       );
 
-      const marker = createMarker(position);
+      const marker = createWaypointMarker(position);
       sceneRef.current.add(marker);
-      markersRef.current.push(marker);
+      waypointMarkersRef.current.push(marker);
 
-      // Create line connecting previous point to current point
-      const lineGeometry = new THREE.BufferGeometry().setFromPoints([
-        previousPosition,
-        position
-      ]);
-      const lineMaterial = new THREE.LineBasicMaterial({
-        color: 0x00ff00,
-        linewidth: 2
-      });
-      const line = new THREE.Line(lineGeometry, lineMaterial);
-      sceneRef.current.add(line);
-      markersRef.current.push(line);
+      // Create line to next waypoint if it exists
+      if (index < waypoints.length - 1) {
+        const nextWaypoint = waypoints[index + 1];
+        const nextPosition = new THREE.Vector3(
+          nextWaypoint.x * scale,
+          nextWaypoint.y * scale,
+          nextWaypoint.z * scale
+        );
 
-      // Update previous position for next iteration
-      previousPosition = position;
+        const lineGeometry = new THREE.BufferGeometry().setFromPoints([
+          position,
+          nextPosition
+        ]);
+        const lineMaterial = new THREE.LineBasicMaterial({
+          color: 0x00ff00,
+          linewidth: 2
+        });
+        const line = new THREE.Line(lineGeometry, lineMaterial);
+        sceneRef.current.add(line);
+        waypointMarkersRef.current.push(line);
+      }
     });
   };
 
