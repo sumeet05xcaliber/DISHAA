@@ -1,196 +1,192 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { ARButton } from 'three/examples/jsm/webxr/ARButton';
 
 const ArComponent = ({ startPos, waypoints }) => {
   const containerRef = useRef(null);
   const sceneRef = useRef(null);
   const cameraRef = useRef(null);
   const rendererRef = useRef(null);
-  const [arStatus, setArStatus] = useState('initializing');
   const markersRef = useRef([]);
+  const [arAnchor, setArAnchor] = useState(null);
 
   useEffect(() => {
-    // Check for WebXR support
-    if (!navigator.xr) {
-      setArStatus('WebXR not supported');
-      return;
-    }
+    if (!containerRef.current) return;
 
-    let session = null;
-    let animationFrameId = null;
+    // Initialize Scene
+    const scene = new THREE.Scene();
+    sceneRef.current = scene;
 
-    const initAR = async () => {
-      try {
-        // Request AR session
-        session = await navigator.xr.requestSession('immersive-ar', {
-          requiredFeatures: ['hit-test']
-        });
+    // Initialize Camera
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    cameraRef.current = camera;
 
-        // Create scene and camera
-        const scene = new THREE.Scene();
-        sceneRef.current = scene;
+    // Initialize Renderer
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: true,
+    });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.xr.enabled = true;
+    rendererRef.current = renderer;
 
-        const camera = new THREE.PerspectiveCamera(
-          75, 
-          window.innerWidth / window.innerHeight, 
-          0.1, 
-          1000
-        );
-        cameraRef.current = camera;
+    // Add renderer to DOM
+    containerRef.current.appendChild(renderer.domElement);
 
-        // Create renderer
-        const renderer = new THREE.WebGLRenderer({
-          alpha: true,
-          canvas: containerRef.current
-        });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.xr.enabled = true;
-        renderer.xr.setReferenceSpace(await session.requestReferenceSpace('local'));
-        rendererRef.current = renderer;
+    // Create AR Button with specific features
+    const arButton = ARButton.createButton(renderer, {
+      requiredFeatures: ['hit-test', 'anchors'],
+      optionalFeatures: ['dom-overlay'],
+      domOverlay: { root: document.body },
+    });
+    document.body.appendChild(arButton);
 
-        // Add lighting
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-        scene.add(ambientLight);
+    // Add ambient light
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
 
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
-        directionalLight.position.set(0, 10, 0);
-        scene.add(directionalLight);
+    // Add directional light
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+    directionalLight.position.set(0, 10, 0);
+    scene.add(directionalLight);
 
-        // Render loop
-        const renderLoop = () => {
-          renderer.render(scene, camera);
-          animationFrameId = session.requestAnimationFrame(renderLoop);
-        };
+    // Animation Loop
+    renderer.setAnimationLoop((timestamp, frame) => {
+      if (frame) {
+        const referenceSpace = renderer.xr.getReferenceSpace();
+        const session = renderer.xr.getSession();
 
-        // Start the render loop
-        renderLoop();
+        if (session && referenceSpace) {
+          // Get hit test results
+          const hitTestSource = frame.getHitTestResults(session.requestHitTestSource({
+            space: referenceSpace
+          }));
 
-        // Visualize navigation points
-        visualizeNavigation(scene);
-
-        setArStatus('active');
-      } catch (error) {
-        console.error('AR Initialization Error:', error);
-        setArStatus('initialization-failed');
-      }
-    };
-
-    // Visualization function
-    const visualizeNavigation = (scene) => {
-      // Clear previous markers
-      markersRef.current.forEach(marker => scene.remove(marker));
-      markersRef.current = [];
-
-      // Scale factor
-      const scale = 0.1;
-
-      // Create start point marker
-      const startPosition = new THREE.Vector3(
-        startPos.x * scale,
-        startPos.y * scale,
-        startPos.z * scale
-      );
-
-      const startMarker = createMarker(startPosition, true);
-      scene.add(startMarker);
-      markersRef.current.push(startMarker);
-
-      // Convert waypoints
-      const scaledWaypoints = waypoints.map(waypoint => 
-        new THREE.Vector3(
-          waypoint.x * scale,
-          waypoint.y * scale,
-          waypoint.z * scale
-        )
-      );
-
-      // Connect points
-      if (scaledWaypoints.length > 0) {
-        const startToFirstLine = createConnectionLine(startPosition, scaledWaypoints[0]);
-        scene.add(startToFirstLine);
-        markersRef.current.push(startToFirstLine);
-      }
-
-      // Create waypoint markers and connections
-      scaledWaypoints.forEach((position, index) => {
-        const waypointMarker = createMarker(position);
-        scene.add(waypointMarker);
-        markersRef.current.push(waypointMarker);
-
-        // Connect consecutive waypoints
-        if (index > 0) {
-          const connectionLine = createConnectionLine(scaledWaypoints[index - 1], position);
-          scene.add(connectionLine);
-          markersRef.current.push(connectionLine);
+          if (hitTestSource.length) {
+            // Use the first hit test result to position our anchor
+            const hit = hitTestSource[0];
+            if (!arAnchor) {
+              // Create an anchor when we first get a hit test
+              const anchorPose = new XRRigidTransform(hit.getPose(referenceSpace).transform.position);
+              hit.createAnchor().then(anchor => {
+                setArAnchor(anchor);
+                updateMarkerPositions(anchor, referenceSpace);
+              });
+            }
+          }
         }
-      });
-    };
+      }
+      renderer.render(scene, camera);
+    });
 
-    // Marker creation helpers
-    const createMarker = (position, isStart = false) => {
-      const markerGeometry = isStart 
-        ? new THREE.SphereGeometry(0.1, 32, 32)
-        : new THREE.CylinderGeometry(0.05, 0.05, 0.2, 32);
-      
-      const markerMaterial = new THREE.MeshPhongMaterial({
-        color: isStart ? 0xff0000 : 0x00ff00,
-        transparent: true,
-        opacity: 0.7
-      });
-      
-      const marker = new THREE.Mesh(markerGeometry, markerMaterial);
-      marker.position.copy(position);
-      return marker;
-    };
-
-    const createConnectionLine = (start, end) => {
-      const lineGeometry = new THREE.BufferGeometry().setFromPoints([start, end]);
-      const lineMaterial = new THREE.LineBasicMaterial({
-        color: 0x0000ff,
-        linewidth: 3
-      });
-      return new THREE.Line(lineGeometry, lineMaterial);
-    };
-
-    // Initialization
-    initAR();
-
-    // Cleanup function
     return () => {
-      if (session) {
-        session.end();
-      }
-      if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId);
-      }
+      renderer.setAnimationLoop(null);
+      renderer.dispose();
+      document.body.removeChild(arButton);
+      cleanupMarkers();
     };
   }, [startPos, waypoints]);
 
-  // Render different content based on AR status
-  const renderContent = () => {
-    switch (arStatus) {
-      case 'initializing':
-        return <div>Initializing AR...</div>;
-      case 'WebXR not supported':
-        return <div>Your device does not support WebXR AR</div>;
-      case 'initialization-failed':
-        return <div>Failed to start AR. Check browser and device compatibility.</div>;
-      case 'active':
-        return null; // AR is running
-      default:
-        return <div>Unexpected AR status</div>;
+  const cleanupMarkers = () => {
+    markersRef.current.forEach(marker => {
+      sceneRef.current.remove(marker);
+      if (marker.geometry) marker.geometry.dispose();
+      if (marker.material) marker.material.dispose();
+    });
+    markersRef.current = [];
+  };
+
+  const createMarker = (position, isStart = false) => {
+    // Create a more visible marker
+    const markerGeometry = isStart 
+      ? new THREE.SphereGeometry(0.1, 32, 32)  // Larger sphere for start point
+      : new THREE.CylinderGeometry(0.05, 0.05, 0.2, 32);
+    
+    const markerMaterial = new THREE.MeshPhongMaterial({
+      color: isStart ? 0xff0000 : 0x00ff00,  // Red for start point, green for waypoints
+      transparent: true,
+      opacity: 0.7
+    });
+    
+    const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+    
+    // Add floating arrow for non-start points
+    if (!isStart) {
+      const arrowGeometry = new THREE.ConeGeometry(0.03, 0.08, 32);
+      const arrowMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+      const arrow = new THREE.Mesh(arrowGeometry, arrowMaterial);
+      arrow.position.y = 0.2;
+      marker.add(arrow);
     }
+
+    // Position the marker
+    marker.position.copy(position);
+    
+    // Add floating animation
+    const animate = () => {
+      marker.position.y += Math.sin(Date.now() * 0.003) * 0.0007;
+      requestAnimationFrame(animate);
+    };
+    animate();
+
+    return marker;
+  };
+
+  const updateMarkerPositions = (anchor, referenceSpace) => {
+    cleanupMarkers();
+    
+    // Scale factor to make the markers visible in AR space
+    const scale = 0.1; // Adjust this value based on your needs
+    
+    // Add start point marker
+    const startPosition = new THREE.Vector3(
+      startPos.x * scale,
+      startPos.y * scale,
+      startPos.z * scale
+    );
+    const startMarker = createMarker(startPosition, true);
+    sceneRef.current.add(startMarker);
+    markersRef.current.push(startMarker);
+
+    // Process waypoints
+    let previousPosition = startPosition;
+    waypoints.forEach((waypoint, index) => {
+      // Convert waypoint coordinates to AR space
+      const position = new THREE.Vector3(
+        waypoint.x * scale,
+        waypoint.y * scale,
+        waypoint.z * scale
+      );
+
+      const marker = createMarker(position);
+      sceneRef.current.add(marker);
+      markersRef.current.push(marker);
+
+      // Create line connecting previous point to current point
+      const lineGeometry = new THREE.BufferGeometry().setFromPoints([
+        previousPosition,
+        position
+      ]);
+      const lineMaterial = new THREE.LineBasicMaterial({
+        color: 0x00ff00,
+        linewidth: 2
+      });
+      const line = new THREE.Line(lineGeometry, lineMaterial);
+      sceneRef.current.add(line);
+      markersRef.current.push(line);
+
+      // Update previous position for next iteration
+      previousPosition = position;
+    });
   };
 
   return (
-    <div className="relative w-full h-screen">
-      <canvas 
-        ref={containerRef} 
-        className="absolute top-0 left-0 w-full h-full"
-      />
-      <div className="absolute top-4 left-4 text-white z-50">
-        {renderContent()}
-      </div>
+    <div ref={containerRef} className="w-full h-screen">
+      {!arAnchor && (
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-white bg-black bg-opacity-50 p-4 rounded">
+          Point your camera at the ground to place waypoints
+        </div>
+      )}
     </div>
   );
 };
