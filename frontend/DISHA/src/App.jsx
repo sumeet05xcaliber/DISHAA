@@ -16,7 +16,7 @@ const App = () => {
 
     try {
       // Replace with your actual backend URL
-      const response = await fetch('https://bee4-182-48-212-124.ngrok-free.app/upload', {
+      const response = await fetch('https://0365-110-224-115-101.ngrok-free.app/upload', {
         method: 'POST',
         body: formData,
       });
